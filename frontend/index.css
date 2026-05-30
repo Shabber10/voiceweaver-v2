@@ -438,26 +438,6 @@ textarea {
     resize: none;
     outline: none;
     z-index: 1;
-    overflow-y: auto;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(0, 122, 255, 0.35) transparent;
-}
-
-/* Glassy custom scrollbar for the textarea */
-textarea::-webkit-scrollbar {
-    width: 6px;
-}
-textarea::-webkit-scrollbar-track {
-    background: transparent;
-}
-textarea::-webkit-scrollbar-thumb {
-    background: rgba(0, 122, 255, 0.3);
-    border-radius: 99px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    transition: background 0.2s;
-}
-textarea::-webkit-scrollbar-thumb:hover {
-    background: rgba(0, 122, 255, 0.6);
 }
 
 textarea::placeholder {
@@ -477,23 +457,13 @@ textarea::placeholder {
     color: transparent;
     background: transparent;
     z-index: 2;
-    /* Must match textarea padding/font exactly */
-    padding: 1rem;
-    font-size: 1.25rem;
-    line-height: 1.6;
-    font-family: inherit;
 }
 
-/* Current spoken word highlight */
 .text-highlight {
-    background: rgba(99, 102, 241, 0.18);
-    border-radius: 6px;
-    display: inline;
-    box-shadow:
-        0 0 0 2px rgba(99, 102, 241, 0.5),
-        0 0 12px rgba(99, 102, 241, 0.35);
-    color: transparent;
-    transition: box-shadow 0.15s ease;
+    background-color: rgba(255, 255, 255, 0.4);
+    border-bottom: 2px solid var(--primary-color);
+    border-radius: 4px;
+    display: inline-block;
 }
 
 .char-count {
@@ -614,11 +584,7 @@ textarea::placeholder {
     display: none !important;
 }
 
-/* ═══════════════════════════════════════════
-   Control Center Floating Dock
-   — Same animated-aura technique as body bg
-   — Palette: amber · emerald · rose (no blue)
-   ═══════════════════════════════════════════ */
+/* Control Center Floating Dock */
 .bottom-dashboard {
     position: fixed;
     bottom: 2rem;
@@ -626,9 +592,11 @@ textarea::placeholder {
     transform: translateX(-50%);
     width: auto;
     min-width: 700px;
-    background: #fff8f0;          /* warm white base */
-    backdrop-filter: blur(0);      /* shapes live inside, no external blur */
-    border: 1px solid rgba(255, 255, 255, 0.7);
+    /* Dark base so neon blobs read true */
+    background: rgba(62, 184, 172, 0.867);
+    backdrop-filter: blur(24px) saturate(160%);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    border: 1px solid rgba(25, 83, 218, 0.879);
     border-radius: 30px;
     padding: 1rem 2rem;
     z-index: 50;
@@ -637,94 +605,9 @@ textarea::placeholder {
     gap: 0.5rem;
     overflow: hidden;
     box-shadow:
-        0 0 0 1px rgba(255, 255, 255, 0.5),
-        0 8px 32px rgba(0, 0, 0, 0.08),
-        0 0 60px rgba(251, 146, 60, 0.18),
-        0 0 80px rgba(52, 211, 153, 0.14);
-}
-
-/* ── Aura shape base (same approach as .shape) ── */
-.dock-shape {
-    position: absolute;
-    border-radius: 50%;
-    filter: blur(55px) saturate(200%);
-    opacity: 0.82;
-    pointer-events: none;
-}
-
-/* Amber/gold blob — top-left */
-.dock-shape-1 {
-    width: 420px;
-    height: 420px;
-    top: -200px;
-    left: -120px;
-    background-color: #fbbf24;
-    animation: dockShift1 18s infinite alternate ease-in-out;
-}
-
-/* Emerald blob — bottom-right */
-.dock-shape-2 {
-    width: 460px;
-    height: 460px;
-    bottom: -220px;
-    right: -140px;
-    background-color: #34d399;
-    animation: dockShift2 22s infinite alternate-reverse ease-in-out;
-}
-
-/* Rose/coral accent blob — centre */
-.dock-shape-3 {
-    width: 340px;
-    height: 340px;
-    top: -120px;
-    left: 35%;
-    background-color: #fb7185;
-    animation: dockShift3 26s infinite alternate ease-in-out;
-}
-
-@keyframes dockShift1 {
-    0%   { transform: translate(0,    0)   scale(1)    rotate(0deg);  background-color: #fbbf24; }
-    30%  { transform: translate(12%,  8%)  scale(1.12) rotate(6deg);  background-color: #f59e0b; }
-    60%  { transform: translate(-8%,  15%) scale(0.92) rotate(-4deg); background-color: #fb923c; }
-    100% { transform: translate(8%,  -8%)  scale(1.06) rotate(2deg);  background-color: #fbbf24; }
-}
-
-@keyframes dockShift2 {
-    0%   { transform: translate(0,    0)   scale(1)    rotate(0deg);  background-color: #34d399; }
-    30%  { transform: translate(-12%,-12%) scale(1.14) rotate(-5deg); background-color: #10b981; }
-    60%  { transform: translate(8%,  -4%)  scale(0.9)  rotate(4deg);  background-color: #6ee7b7; }
-    100% { transform: translate(-8%, 8%)   scale(1.1)  rotate(-2deg); background-color: #34d399; }
-}
-
-@keyframes dockShift3 {
-    0%   { transform: translate(0, 0)    scale(1);    background-color: #fb7185; }
-    33%  { transform: translate(10%,-18%) scale(0.88); background-color: #f43f5e; }
-    66%  { transform: translate(-12%, 8%) scale(1.18); background-color: #fda4af; }
-    100% { transform: translate(4%,  12%) scale(1);   background-color: #fb7185; }
-}
-
-/* Frosted glass scrim so controls stay readable */
-.dock-glass-scrim {
-    position: absolute;
-    inset: 0;
-    background: rgba(255, 255, 255, 0.32);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    z-index: 0;
-    pointer-events: none;
-    border-radius: inherit;
-}
-
-/* All dock children above the aura layers */
-.bottom-dashboard > * {
-    position: relative;
-    z-index: 1;
-}
-
-/* Keep dock text dark (light background) */
-.bottom-dashboard .time-label,
-.bottom-dashboard .control-btn {
-    color: rgba(29, 29, 31, 0.85);
+        0 0 40px rgba(0, 255, 100, 0.15),
+        0 0 80px rgba(255, 140, 0, 0.12),
+        0 20px 60px rgba(0, 0, 0, 0.5);
 }
 
 /* ── Neon Green radium blob ── */
