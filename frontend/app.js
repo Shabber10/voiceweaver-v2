@@ -1,0 +1,744 @@
+document.addEventListener('DOMContentLoaded', () => {
+    const textInput = document.getElementById('text-input');
+    const downloadBtn = document.getElementById('download-btn');
+    const charCount = document.getElementById('count');
+    const statusMsg = document.getElementById('status-message');
+    const audioPlayer = document.getElementById('audio-player');
+    const voiceSelect = document.getElementById('voice-select');
+    
+    // Core Controls
+    const skipBack30Btn = document.getElementById('skip-back-30-btn');
+    const skipBackBtn = document.getElementById('skip-back-btn');
+    const pausePlayBtn = document.getElementById('pause-play-btn');
+    const skipForward10Btn = document.getElementById('skip-forward-10-btn');
+    const skipForwardBtn = document.getElementById('skip-forward-btn');
+    const loopBtn = document.getElementById('loop-btn');
+    
+    // Icons
+    const pauseIcon = document.getElementById('pause-icon');
+    const playIcon = document.getElementById('play-icon');
+    
+    // Settings & Utils
+    const settingsContainer = document.querySelector('.settings-container');
+    const settingsBtn = document.getElementById('settings-btn');
+    const settingsPopover = document.getElementById('settings-popover');
+    
+    const volumeSlider = document.getElementById('volume-slider');
+    const volDown = document.getElementById('vol-down');
+    const volUp = document.getElementById('vol-up');
+    
+    const speedSlider = document.getElementById('speed-slider');
+    const speedDown = document.getElementById('speed-down');
+    const speedUp = document.getElementById('speed-up');
+    const speedLabel = document.getElementById('speed-label');
+    
+    // Timeline
+    const progressSlider = document.getElementById('progress-slider');
+    const currentTimeEl = document.getElementById('current-time');
+    const totalTimeEl = document.getElementById('total-time');
+
+    // UI Modes
+    const textMode = document.getElementById('text-mode');
+    const imageMode = document.getElementById('image-mode');
+    const uploadBtn = document.getElementById('upload-image-btn');
+    const imageInput = document.getElementById('image-input');
+    const uploadedImg = document.getElementById('uploaded-image');
+    const highlightCanvas = document.getElementById('highlight-canvas');
+    const textOverlay = document.getElementById('text-overlay');
+    const closeImageBtn = document.getElementById('close-image-btn');
+    const ocrLoader = document.getElementById('ocr-loader');
+    
+    // Voice Loader Elements
+    const voiceLoader = document.getElementById('voice-loader');
+    const loadPercent = document.getElementById('load-percent');
+    const ringProgress = document.getElementById('ring-progress');
+
+    let isGenerated = false;
+    let isImageMode = false;
+    let ocrResult = null; // Stores Tesseract result { words: [...] }
+    let wordTimings = []; // Stores backend timings [{ word, offset, duration }]
+    
+    // Speculative Generation State
+    let preGeneratedAudio = null;
+    let preGeneratedTimings = [];
+    let preGeneratedText = "";
+    let isPreGenerating = false;
+    let pendingPlay = false; // Flag if user clicked play while pre-gen was in progress
+    let debounceTimer = null;
+
+    // --- Web Audio API Filtering ---
+    let audioCtx;
+    let track;
+    let highPassFilter;
+    let isWebAudioInitialized = false;
+
+    const initWebAudio = () => {
+        if (isWebAudioInitialized) return;
+        
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+
+        track = audioCtx.createMediaElementSource(audioPlayer);
+
+        // Create a BiquadFilter to denoise room hum and add studio clarity
+        highPassFilter = audioCtx.createBiquadFilter();
+        highPassFilter.type = "highpass";
+        highPassFilter.frequency.value = 80;
+
+        track.connect(highPassFilter).connect(audioCtx.destination);
+        
+        isWebAudioInitialized = true;
+    };
+
+    // --- Core UI Logic ---
+
+    textInput.addEventListener('input', () => {
+        charCount.textContent = textInput.value.length;
+        resetPlaybackState();
+        
+        // Speculative trigger
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+            const text = textInput.value.trim();
+            if (text.length > 5 && text !== preGeneratedText) {
+                startPreGeneration(text);
+            }
+        }, 800);
+    });
+
+    const resetPlaybackState = () => {
+        if (isGenerated || isPreGenerating || preGeneratedAudio) {
+            isGenerated = false;
+            
+            // Manage memory for Blob URLs
+            if (preGeneratedAudio && preGeneratedAudio.startsWith('blob:')) {
+                URL.revokeObjectURL(preGeneratedAudio);
+            }
+            
+            preGeneratedAudio = null;
+            preGeneratedTimings = [];
+            preGeneratedText = "";
+            pendingPlay = false;
+            
+            audioPlayer.pause();
+            audioPlayer.removeAttribute('src');
+            audioPlayer.load(); // Reset player state
+            
+            pauseIcon.style.display = 'none';
+            playIcon.style.display = 'block';
+            
+            progressSlider.value = 0;
+            currentTimeEl.textContent = '0:00';
+            totalTimeEl.textContent = '0:00';
+            
+            setMediaControlsState(true);
+            wordTimings = [];
+            lastMatchEnd = 0;
+            clearHighlight();
+            
+            // Clear text overlay
+            textOverlay.classList.add('hidden');
+            textOverlay.innerHTML = '';
+        }
+    };
+
+    const setStatus = (msg, type) => {
+        statusMsg.textContent = msg;
+        statusMsg.className = `status-message show ${type}`;
+    };
+
+    const clearStatus = () => {
+        statusMsg.className = 'status-message';
+    };
+
+    const setButtonsState = (disabled) => {
+        pausePlayBtn.disabled = disabled;
+        downloadBtn.disabled = disabled;
+        uploadBtn.disabled = disabled;
+        if (disabled) {
+            pausePlayBtn.classList.add('loading-pulse');
+            downloadBtn.classList.add('loading-pulse');
+        } else {
+            pausePlayBtn.classList.remove('loading-pulse');
+            downloadBtn.classList.remove('loading-pulse');
+        }
+    };
+
+    const setMediaControlsState = (disabled) => {
+        if(skipBack30Btn) skipBack30Btn.disabled = disabled;
+        if(skipBackBtn) skipBackBtn.disabled = disabled;
+        if(skipForward10Btn) skipForward10Btn.disabled = disabled;
+        if(skipForwardBtn) skipForwardBtn.disabled = disabled;
+        if(settingsBtn) settingsBtn.disabled = disabled;
+    };
+
+    // --- OCR & Image Handling ---
+
+    uploadBtn.addEventListener('click', () => imageInput.click());
+
+    imageInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+            uploadedImg.src = event.target.result;
+            switchToImageMode();
+            
+            // Run OCR
+            try {
+                ocrLoader.classList.remove('hidden');
+                setStatus('Initializing OCR engine...', 'loading');
+                
+                // Multilingual support: English + Hindi + Telugu
+                const worker = await Tesseract.createWorker(['eng', 'hin', 'tel']);
+                setStatus('Extracting text from image...', 'loading');
+                const result = await worker.recognize(event.target.result);
+                ocrResult = result.data;
+                await worker.terminate();
+                
+                if (ocrResult.text.trim().length === 0) {
+                    throw new Error('No text found in the image.');
+                }
+
+                setStatus('Text extracted successfully.', 'success');
+                resetPlaybackState(); // Clear any previous audio
+                
+                // Immediate speculative trigger for OCR mode
+                startPreGeneration(ocrResult.text);
+            } catch (error) {
+                setStatus(`OCR Error: ${error.message}`, 'error');
+                switchToTextMode();
+            } finally {
+                ocrLoader.classList.add('hidden');
+            }
+        };
+        reader.readAsDataURL(file);
+    });
+
+    const ttsCard = document.querySelector('.tts-card');
+    const zoomTarget = document.getElementById('zoom-target');
+    let scale = 1;
+    let translateX = 0;
+    let translateY = 0;
+    let isPanning = false;
+    let startX, startY;
+
+    const updateZoomTransform = () => {
+        zoomTarget.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+    };
+
+    // Zoom event
+    zoomTarget.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const zoomSpeed = 0.1;
+        const delta = e.deltaY > 0 ? -zoomSpeed : zoomSpeed;
+        const newScale = Math.min(Math.max(0.5, scale + delta), 5);
+        
+        // Zoom toward cursor (simplified)
+        scale = newScale;
+        updateZoomTransform();
+    }, { passive: false });
+
+    // Pan events
+    zoomTarget.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return; // Left click only
+        isPanning = true;
+        startX = e.clientX - translateX;
+        startY = e.clientY - translateY;
+        zoomTarget.style.cursor = 'grabbing';
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isPanning) return;
+        translateX = e.clientX - startX;
+        translateY = e.clientY - startY;
+        updateZoomTransform();
+    });
+
+    window.addEventListener('mouseup', () => {
+        isPanning = false;
+        zoomTarget.style.cursor = 'grab';
+    });
+
+    const switchToImageMode = () => {
+        isImageMode = true;
+        textMode.classList.add('hidden');
+        imageMode.classList.remove('hidden');
+        ttsCard.classList.add('image-mode-active');
+        uploadBtn.classList.add('active');
+        
+        // Reset zoom
+        scale = 1;
+        translateX = 0;
+        translateY = 0;
+        updateZoomTransform();
+        resetPlaybackState();
+    };
+
+    const switchToTextMode = () => {
+        isImageMode = false;
+        textMode.classList.remove('hidden');
+        imageMode.classList.add('hidden');
+        ttsCard.classList.remove('image-mode-active');
+        uploadBtn.classList.remove('active');
+        ocrResult = null;
+        imageInput.value = '';
+        resetPlaybackState();
+        clearHighlight();
+    };
+
+    closeImageBtn.addEventListener('click', switchToTextMode);
+
+    // Determine API Base URL dynamically for local vs Remote (Render)
+    const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+        ? 'http://localhost:3001' 
+        : 'https://voiceweaver.onrender.com';
+
+    const fetchTTS = async (text) => {
+        const voice = voiceSelect ? voiceSelect.value : undefined;
+        const response = await fetch(`${API_BASE}/api/tts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, voice })
+        });
+
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.error || 'Failed to generate speech');
+        }
+
+        return response.blob();
+    };
+
+    const fetchTTSWithTimings = async (text) => {
+        const voice = voiceSelect ? voiceSelect.value : undefined;
+        const response = await fetch(`${API_BASE}/api/tts-with-timings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, voice })
+        });
+
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.error || 'Failed to generate speech');
+        }
+
+        return response.json();
+    };
+
+    let progressInterval = null;
+    let currentSimProgress = 0;
+
+    const updateVoiceLoader = (percent) => {
+        const p = Math.min(100, Math.max(0, percent));
+        loadPercent.textContent = `${Math.round(p)}%`;
+        const offset = 339.292 - (339.292 * p / 100);
+        ringProgress.style.strokeDashoffset = offset;
+    };
+
+    const startProgressSimulation = () => {
+        if (progressInterval) clearInterval(progressInterval);
+        currentSimProgress = 0;
+        updateVoiceLoader(0);
+        voiceLoader.classList.remove('hidden');
+        
+        progressInterval = setInterval(() => {
+            if (currentSimProgress < 98) {
+                // Smooth incremental progress
+                const inc = Math.random() * 1.5 + 0.2; 
+                currentSimProgress += inc;
+                updateVoiceLoader(currentSimProgress);
+            }
+        }, 60);
+    };
+
+    const startPreGeneration = async (text) => {
+        const normalizedText = text.trim().replace(/\s+/g, ' ');
+        if (isPreGenerating || normalizedText === preGeneratedText) {
+            // If already generating but user clicks play, start the UI simulation
+            if (pendingPlay && !progressInterval) {
+                startProgressSimulation();
+            }
+            return;
+        }
+        
+        try {
+            isPreGenerating = true;
+            preGeneratedText = normalizedText;
+            setStatus('Optimizing your voice...', 'loading');
+            
+            // Start progress simulation if user is already waiting
+            if (pendingPlay) {
+                startProgressSimulation();
+            }
+            
+            const data = await fetchTTSWithTimings(normalizedText);
+            preGeneratedAudio = `data:audio/mpeg;base64,${data.audioBase64}`;
+            preGeneratedTimings = data.timings;
+            
+            if (!pendingPlay) {
+                setStatus('Ready to play.', 'success');
+            }
+            
+            // If user was waiting for this, start playing now
+            if (pendingPlay) {
+                clearInterval(progressInterval);
+                progressInterval = null;
+                updateVoiceLoader(100);
+                pendingPlay = false;
+                startFinalPlayback();
+            }
+        } catch (error) {
+            console.error('Pre-gen error:', error);
+            isPreGenerating = false;
+            preGeneratedText = "";
+            clearInterval(progressInterval);
+            progressInterval = null;
+            voiceLoader.classList.add('hidden');
+        } finally {
+            isPreGenerating = false;
+        }
+    };
+
+    const startFinalPlayback = () => {
+        if (!preGeneratedAudio) return;
+        
+        try {
+            audioPlayer.src = preGeneratedAudio;
+            audioPlayer.load(); // Force browser to re-read the new src
+            
+            wordTimings = preGeneratedTimings;
+            
+            isGenerated = true;
+
+            // UI delay removed; silence is handled by the backend instead
+            audioPlayer.play().catch(e => {
+                console.error("Playback failed:", e);
+                setStatus("Click 'Play' again to start.", "error");
+            });
+            setStatus('Playing...', 'success');
+            setButtonsState(false);
+            voiceLoader.classList.add('hidden');
+        } catch (err) {
+            console.error("Playback initialization error:", err);
+            setStatus("Ready to play.", "success");
+            setButtonsState(false);
+            voiceLoader.classList.add('hidden');
+        }
+    };
+
+    // --- Highlighting Logic ---
+
+    const clearHighlight = () => {
+        const ctx = highlightCanvas.getContext('2d');
+        ctx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+    };
+
+    const drawHighlight = (wordIndex) => {
+        if (!ocrResult || !ocrResult.words[wordIndex]) return;
+        
+        const word = ocrResult.words[wordIndex];
+        const ctx = highlightCanvas.getContext('2d');
+        
+        // Match canvas size to displayed image size
+        const displayWidth = uploadedImg.clientWidth;
+        const displayHeight = uploadedImg.clientHeight;
+        const naturalWidth = uploadedImg.naturalWidth;
+        const naturalHeight = uploadedImg.naturalHeight;
+        
+        highlightCanvas.width = displayWidth;
+        highlightCanvas.height = displayHeight;
+        
+        const scaleX = displayWidth / naturalWidth;
+        const scaleY = displayHeight / naturalHeight;
+        
+        const box = word.bbox; // {x0, y0, x1, y1}
+        
+        clearHighlight();
+        
+        // Simple glowing highlight
+        ctx.fillStyle = 'rgba(6, 182, 212, 0.3)'; // Primary accent with transparency
+        ctx.strokeStyle = 'rgba(6, 182, 212, 0.8)';
+        ctx.lineWidth = 2;
+        
+        const x = box.x0 * scaleX;
+        const y = box.y0 * scaleY;
+        const w = (box.x1 - box.x0) * scaleX;
+        const h = (box.y1 - box.y0) * scaleY;
+        
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeRect(x, y, w, h);
+    };
+
+    // Track char position so repeated words highlight the right occurrence
+    let lastMatchEnd = 0;
+
+    const drawTextHighlight = (wordIndex) => {
+        if (wordIndex < 0 || wordIndex >= wordTimings.length) return;
+
+        const wordData = wordTimings[wordIndex];
+        const rawText = textInput.value;
+        const searchWord = wordData.text;
+
+        // Reset search position at the beginning of each new utterance
+        if (wordIndex === 0) lastMatchEnd = 0;
+
+        const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`(?<![\\w])${escapeRegExp(searchWord)}(?![\\w])`, 'i');
+
+        // Search only from last matched position forward so repeated words advance correctly
+        const searchSlice = rawText.slice(lastMatchEnd);
+        const match = regex.exec(searchSlice);
+
+        if (!match) {
+            // Fallback: search entire text
+            const fallback = regex.exec(rawText);
+            if (!fallback) return;
+            lastMatchEnd = fallback.index + fallback[0].length;
+        } else {
+            lastMatchEnd = lastMatchEnd + match.index + match[0].length;
+        }
+
+        const matchStart = lastMatchEnd - (match ? match[0].length : searchWord.length);
+
+        // Build highlighted HTML
+        const before = rawText.slice(0, matchStart)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const word   = rawText.slice(matchStart, lastMatchEnd)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const after  = rawText.slice(lastMatchEnd)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        textOverlay.innerHTML =
+            before +
+            `<mark class="text-highlight">${word}</mark>` +
+            after;
+        textOverlay.classList.remove('hidden');
+
+        // ── Auto-scroll: keep the highlighted word in view ──
+        // Use a temporary span to measure the word's Y position inside the overlay
+        const mark = textOverlay.querySelector('mark.text-highlight');
+        if (mark) {
+            // Sync overlay scroll first
+            textOverlay.scrollTop = textInput.scrollTop;
+
+            const markRect   = mark.getBoundingClientRect();
+            const inputRect  = textInput.getBoundingClientRect();
+            const markBottom = markRect.bottom;
+            const markTop    = markRect.top;
+
+            // If mark is below the visible area, scroll down
+            if (markBottom > inputRect.bottom - 20) {
+                textInput.scrollTop += (markBottom - inputRect.bottom) + 40;
+            }
+            // If mark is above the visible area, scroll up
+            else if (markTop < inputRect.top + 20) {
+                textInput.scrollTop -= (inputRect.top - markTop) + 20;
+            }
+
+            // Keep overlay in sync
+            textOverlay.scrollTop = textInput.scrollTop;
+        }
+    };
+
+    // Sync overlay scroll whenever user scrolls the textarea
+    textInput.addEventListener('scroll', () => {
+        textOverlay.scrollTop = textInput.scrollTop;
+    });
+
+    // --- Audio Logic ---
+
+    pausePlayBtn.addEventListener('click', async () => {
+        // Always initialize and resume Web Audio Context synchronously on user gesture
+        initWebAudio();
+        if (audioCtx && audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+
+        if (!isGenerated) {
+            // UNLOCK TRICK: Play silence synchronously to unlock the audio player for async playback later
+            if (!audioPlayer.src || audioPlayer.src === window.location.href) {
+                 audioPlayer.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+                 audioPlayer.play().catch(() => {});
+            }
+
+            const rawText = isImageMode ? (ocrResult ? ocrResult.text : "") : textInput.value.trim();
+            const text = rawText.trim().replace(/\s+/g, ' ');
+            
+            if (!text) {
+                setStatus('Please enter text or upload an image.', 'error');
+                return;
+            }
+
+            // CASE 1: Audio is already pre-generated and matches text
+            if (preGeneratedAudio && text === preGeneratedText) {
+                startFinalPlayback();
+                return;
+            }
+
+            // CASE 2: Generation is currently in progress
+            if (isPreGenerating && text === preGeneratedText) {
+                pendingPlay = true;
+                setStatus('Optimizing your voice...', 'loading');
+                setButtonsState(true);
+                
+                // Show the central loader and start simulation
+                startProgressSimulation();
+                return;
+            }
+
+            // CASE 3: Fresh generation needed
+            try {
+                pendingPlay = true; // Mark that we are waiting for this generation
+                setButtonsState(true);
+                setStatus('Optimizing your voice...', 'loading');
+                
+                // Show loader and start simulation immediately
+                startProgressSimulation();
+                
+                await startPreGeneration(text);
+                // Note: startFinalPlayback is called inside startPreGeneration if pendingPlay is true
+            } catch (error) {
+                setStatus(`Error: ${error.message}`, 'error');
+                setButtonsState(false);
+            }
+        } else {
+            if (audioPlayer.paused) {
+                audioPlayer.play();
+            } else {
+                audioPlayer.pause();
+            }
+        }
+    });
+
+    audioPlayer.addEventListener('timeupdate', () => {
+        const currentTimeMs = audioPlayer.currentTime * 1000;
+        progressSlider.value = audioPlayer.currentTime;
+        currentTimeEl.textContent = formatTime(audioPlayer.currentTime);
+
+        if (wordTimings.length > 0) {
+            // Find the current word based on audio time
+            const currentWordIndex = wordTimings.findIndex(t => 
+                currentTimeMs >= t.offset && currentTimeMs <= (t.offset + t.duration + 100)
+            );
+            
+            if (currentWordIndex !== -1) {
+                if (isImageMode) {
+                    drawHighlight(currentWordIndex);
+                } else {
+                    drawTextHighlight(currentWordIndex);
+                }
+            } else {
+                // If we are between words or offset is slightly off, we might want to keep the last highlight
+                // or clear it. Let's keep it until a new one appears or audio ends.
+            }
+        }
+    });
+
+    // Reset highlight on end/pause
+    audioPlayer.addEventListener('ended', () => {
+        clearHighlight();
+        textOverlay.classList.add('hidden');
+        textOverlay.innerHTML = '';
+        if (isGenerated) {
+            pauseIcon.style.display = 'none';
+            playIcon.style.display = 'block';
+            setStatus('Ready to play.', 'success');
+        }
+    });
+    audioPlayer.addEventListener('pause', () => {
+        // We might want to keep the highlight when paused for better UX
+    });
+
+    // --- Existing Controls ---
+
+    const formatTime = (time) => {
+        if (isNaN(time) || !isFinite(time)) return "0:00";
+        const minutes = Math.floor(time / 60);
+        const seconds = Math.floor(time % 60);
+        return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+    };
+
+    audioPlayer.addEventListener('loadedmetadata', () => {
+        progressSlider.max = audioPlayer.duration;
+        totalTimeEl.textContent = formatTime(audioPlayer.duration);
+    });
+
+    progressSlider.addEventListener('input', () => {
+        audioPlayer.currentTime = progressSlider.value;
+    });
+
+    audioPlayer.addEventListener('play', () => {
+        if (isGenerated) {
+            pauseIcon.style.display = 'block';
+            playIcon.style.display = 'none';
+        }
+        setMediaControlsState(false);
+    });
+
+    audioPlayer.addEventListener('pause', () => {
+        if (isGenerated) {
+            pauseIcon.style.display = 'none';
+            playIcon.style.display = 'block';
+        }
+    });
+
+    // ... rest of the buttons logic (skips, loop, speed, volume, download) ...
+    // Note: To keep the file brief, I'll assume the rest of the button handlers are similar to before.
+    
+    if (skipBack30Btn) skipBack30Btn.addEventListener('click', () => audioPlayer.currentTime = Math.max(0, audioPlayer.currentTime - 30));
+    if (skipBackBtn) skipBackBtn.addEventListener('click', () => audioPlayer.currentTime = Math.max(0, audioPlayer.currentTime - 10));
+    if (skipForward10Btn) skipForward10Btn.addEventListener('click', () => audioPlayer.currentTime = Math.min(audioPlayer.duration, audioPlayer.currentTime + 10));
+    if (skipForwardBtn) skipForwardBtn.addEventListener('click', () => audioPlayer.currentTime = Math.min(audioPlayer.duration, audioPlayer.currentTime + 30));
+    
+    if (loopBtn) {
+        loopBtn.addEventListener('click', () => {
+            audioPlayer.loop = !audioPlayer.loop;
+            loopBtn.classList.toggle('active', audioPlayer.loop);
+        });
+    }
+    
+    if (volumeSlider) volumeSlider.addEventListener('input', (e) => audioPlayer.volume = e.target.value);
+    if (volDown) volDown.addEventListener('click', () => { volumeSlider.value = Math.max(0, volumeSlider.value - 0.05); audioPlayer.volume = volumeSlider.value; });
+    if (volUp) volUp.addEventListener('click', () => { volumeSlider.value = Math.min(1, parseFloat(volumeSlider.value) + 0.05); audioPlayer.volume = volumeSlider.value; });
+    
+    if (speedSlider) speedSlider.addEventListener('input', (e) => { audioPlayer.playbackRate = e.target.value; if (speedLabel) speedLabel.textContent = parseFloat(e.target.value).toFixed(2) + 'x'; });
+    if (speedDown) speedDown.addEventListener('click', () => { speedSlider.value = Math.max(0.25, speedSlider.value - 0.25); audioPlayer.playbackRate = speedSlider.value; if (speedLabel) speedLabel.textContent = parseFloat(speedSlider.value).toFixed(2) + 'x'; });
+    if (speedUp) speedUp.addEventListener('click', () => { speedSlider.value = Math.min(2, parseFloat(speedSlider.value) + 0.25); audioPlayer.playbackRate = speedSlider.value; if (speedLabel) speedLabel.textContent = parseFloat(speedSlider.value).toFixed(2) + 'x'; });
+    
+    if (settingsBtn) settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); settingsPopover.classList.toggle('hidden'); });
+    document.addEventListener('click', (e) => { if (settingsContainer && !settingsContainer.contains(e.target) && settingsPopover) settingsPopover.classList.add('hidden'); });
+
+    if (voiceSelect) {
+        voiceSelect.addEventListener('change', () => {
+            resetPlaybackState();
+            const text = isImageMode ? (ocrResult ? ocrResult.text : "") : textInput.value.trim();
+            if (text.length > 5) {
+                clearTimeout(debounceTimer);
+                startPreGeneration(text);
+            }
+        });
+    }
+
+    downloadBtn.addEventListener('click', async () => {
+        let text = "";
+        if (isImageMode) { if (!ocrResult) return; text = ocrResult.text; } else { text = textInput.value.trim(); }
+        if (!text) return;
+        try {
+            setButtonsState(true);
+            setStatus('Preparing download...', 'loading');
+            const blob = await fetchTTS(text);
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'voiceweaver_speech.mp3';
+            a.click();
+            setStatus('Download started.', 'success');
+        } catch (error) { setStatus(`Error: ${error.message}`, 'error'); } finally { setButtonsState(false); }
+    });
+
+    // Initialize UI
+    setMediaControlsState(true);
+    pausePlayBtn.disabled = false;
+});
