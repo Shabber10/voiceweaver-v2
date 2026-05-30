@@ -1,7 +1,7 @@
 <div align="center">
   <img src="https://capsule-render.vercel.app/api?type=waving&color=timeGradient&height=250&section=header&text=voiceweaver&fontSize=70&animation=fadeIn&fontAlignY=38&desc=Premium%20Zero-Latency%20TTS%20&%20OCR&descAlignY=55&descAlign=50"/>
 
-  [![Live Demo](https://img.shields.io/badge/demo-live-brightgreen?style=for-the-badge&logo=render)]([[https://voiceweaver.onrender.com](https://voiceweaver-v2.onrender.com)](https://voiceweaver-v2.onrender.com))
+  [![Live Demo](https://img.shields.io/badge/demo-live-brightgreen?style=for-the-badge&logo=render)](https://voiceweaver-v2.onrender.com)
 </div>
 
 # 🎙️ VoiceWeaver
@@ -42,7 +42,7 @@ graph LR
 ## 🚀 Live Demo
 
 Experience the power of zero-latency TTS live:
-👉 **[Launch voiceweaver Demo](https://voiceweaver.onrender.com)**
+👉 **[Launch VoiceWeaver v2 Demo](https://voiceweaver-v2.onrender.com)**
 
 ---
 
@@ -61,7 +61,7 @@ Experience the power of zero-latency TTS live:
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/Shabber10/voiceweaver.git
+   git clone https://github.com/Shabber10/voiceweaver-v2.git
    ```
 2. Install dependencies:
    ```bash
