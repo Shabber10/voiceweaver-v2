@@ -1,7 +1,7 @@
 <div align="center">
   <img src="https://capsule-render.vercel.app/api?type=waving&color=timeGradient&height=250&section=header&text=voiceweaver&fontSize=70&animation=fadeIn&fontAlignY=38&desc=Premium%20Zero-Latency%20TTS%20&%20OCR&descAlignY=55&descAlign=50"/>
 
-  [![Live Demo](https://img.shields.io/badge/demo-live-brightgreen?style=for-the-badge&logo=render)](https://voiceweaver.onrender.com)
+  [![Live Demo](https://img.shields.io/badge/demo-live-brightgreen?style=for-the-badge&logo=render)]([https://voiceweaver.onrender.com](https://voiceweaver-v2.onrender.com))
 </div>
 
 # 🎙️ VoiceWeaver
